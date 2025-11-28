@@ -1,3 +1,6 @@
-res://scripts/Main.gd
 res://scenes/Start.tscn
+res://scripts/Main.gd
+res://scripts/Levels.gd
 res://scripts/Start.gd
+res://scenes/LevelSelect.tscn
+res://scripts/LevelSelect.gd

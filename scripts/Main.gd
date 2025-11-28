@@ -1,116 +1,200 @@
 extends Control
 
-# ----------------- Board constants -----------------
-const GRID_SIZE : int = 6      # 6x6 board
-const CELL      : int = 96     # pixel size of one cell
-const PADDING   : int = 24     # screen margin (global pos of the board only)
-const LINE_PX   : int = 1      # grid line thickness (visual)
+# ========================================================
+# CONSTANTES DU BOARD
+# ========================================================
+const GRID_SIZE := 6
+const CELL := 96
+const PADDING := 24
 
-# ----------------- Runtime state -------------------
-var board_rect : ColorRect                  # the board background (Control/ColorRect)
-var cars : Dictionary = {}                  # id -> TextureRect (visual car)
-var car_defs : Dictionary = {}              # id -> {x,y,len,dir} (logical state)
-var occ : Array = []                        # occupancy[y][x] = id or null
+# ========================================================
+# VARIABLES
+# ========================================================
+var board_rect : ColorRect
+var cars : Dictionary = {}
+var car_defs : Dictionary = {}
+var occ : Array = []
 
-# ----------------- SOLVABLE LEVEL ------------------
-# Red ("R") at row 2 must reach the right; this layout is solvable
-# without any initial overlaps.
-var level := {
-	"cars": [
-		{"id":"R","x":1,"y":2,"len":2,"dir":"H"},  # target car
+var move_count := 0
+var timer := 0.0
+var timer_running := true
+var won := false
 
-		{"id":"A","x":0,"y":0,"len":2,"dir":"H"},  # top-left H2
-		{"id":"F","x":2,"y":0,"len":2,"dir":"H"},  # top middle H2
-		{"id":"B","x":4,"y":0,"len":3,"dir":"V"},  # right-top V3 (will move down later)
-		{"id":"C","x":3,"y":2,"len":3,"dir":"V"},  # center V3 (move down after freeing bottom-right)
-		{"id":"D","x":0,"y":3,"len":3,"dir":"V"},  # left V3
-		{"id":"E","x":2,"y":5,"len":2,"dir":"H"},  # bottom H2 (can slide left to free C)
-		{"id":"G","x":5,"y":3,"len":2,"dir":"V"}   # far-right V2 (doesn't block the exit row)
-	]
-}
+var victory_layer : Control
+var pause_layer : Control
 
+# HUD
+var level_label : Label
+var moves_label : Label
+var timer_label : Label
+
+# ========================================================
+# READY
+# ========================================================
 func _ready() -> void:
 	_build_board()
+	_build_ui()
+	_build_pause_layer()
+	_build_victory_layer()
 
-	# Validate the level definition BEFORE we spawn anything
-	if not _validate_level(level):
-		push_error("Level has overlapping or out-of-bounds cars. Fix the 'level' dictionary.")
-		return
-
-	_spawn_cars()
+	_load_level()
 	_rebuild_occupancy()
 
-# ===================================================
-# Board creation (cars, grid lines and exit all use
-# the SAME coordinate space: board-local pixels)
-# ===================================================
+	set_process(true)
+
+# ========================================================
+# PROCESS — TIMER
+# ========================================================
+func _process(delta: float) -> void:
+	if timer_running and not won:
+		timer += delta
+		_update_timer_label()
+
+# ========================================================
+# BUILD BOARD
+# ========================================================
 func _build_board() -> void:
 	board_rect = ColorRect.new()
-	board_rect.color = Color(0,0,0,0)                     # transparent; background is a texture child
-	board_rect.position = Vector2(PADDING, 120)
-	board_rect.size     = Vector2(CELL * GRID_SIZE, CELL * GRID_SIZE)
+	board_rect.color = Color(0, 0, 0, 0)
+	board_rect.position = Vector2(PADDING, 140)
+	board_rect.size = Vector2(CELL * GRID_SIZE, CELL * GRID_SIZE)
 	add_child(board_rect)
 
-	# >>> Road background image
 	var bg := TextureRect.new()
-	bg.texture = ImageTexture.create_from_image(Image.load_from_file("res://assets/board/board_bg.png"))
+	bg.texture = ImageTexture.create_from_image(
+		Image.load_from_file("res://assets/board/board_bg.png")
+	)
 	bg.stretch_mode = TextureRect.STRETCH_SCALE
-	bg.expand_mode  = TextureRect.EXPAND_IGNORE_SIZE
-	bg.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	bg.anchor_left = 0; bg.anchor_top = 0; bg.anchor_right = 0; bg.anchor_bottom = 0
-	bg.position = Vector2(0, 0)                           # board-local
-	bg.size     = board_rect.size                         # fill the board
+	bg.size = board_rect.size
 	board_rect.add_child(bg)
 
-	# (Remove this block if your background already draws the exit)
-	var exit_rect := ColorRect.new()
-	exit_rect.color = Color.from_string("#4caf50", Color(0,1,0))
-	exit_rect.position = Vector2(board_rect.size.x, CELL * 2 + 16)
-	exit_rect.size = Vector2(10, CELL - 32)
-	board_rect.add_child(exit_rect)
+# ========================================================
+# BUILD UI (HUD)
+# ========================================================
+func _build_ui() -> void:
+	var hud := VBoxContainer.new()
+	hud.anchor_left = 0
+	hud.anchor_top = 0
+	hud.position = Vector2(PADDING, 20)
+	add_child(hud)
 
-# ===================================================
-# Level validation (no overlaps, inside bounds)
-# ===================================================
-func _validate_level(L:Dictionary) -> bool:
-	# build a temporary occupancy to check all cars
-	var tmp : Array = []
-	for _y in range(GRID_SIZE):
-		var row : Array = []
-		for _x in range(GRID_SIZE):
-			row.append(null)
-		tmp.append(row)
+	level_label = Label.new()
+	moves_label = Label.new()
+	timer_label = Label.new()
 
-	for cd in L["cars"]:
-		var id : String = cd["id"]
-		var x  : int = int(cd["x"])
-		var y  : int = int(cd["y"])
-		var l  : int = int(cd["len"])
-		var dir: String = cd["dir"]
+	level_label.text = "Niveau %d" % (Levels.get_current_index() + 1)
+	moves_label.text = "Mouvements : 0"
+	timer_label.text = "Temps : 00:00"
 
-		if dir == "H":
-			# bounds
-			if x < 0 or x + l - 1 >= GRID_SIZE or y < 0 or y >= GRID_SIZE:
-				return false
-			# overlap
-			for dx in range(l):
-				if tmp[y][x + dx] != null:
-					return false
-				tmp[y][x + dx] = id
-		else:
-			if y < 0 or y + l - 1 >= GRID_SIZE or x < 0 or x >= GRID_SIZE:
-				return false
-			for dy in range(l):
-				if tmp[y + dy][x] != null:
-					return false
-				tmp[y + dy][x] = id
+	hud.add_child(level_label)
+	hud.add_child(moves_label)
+	hud.add_child(timer_label)
 
-	return true
+# ========================================================
+# BUILD PAUSE LAYER
+# ========================================================
+func _build_pause_layer() -> void:
+	pause_layer = Control.new()
+	pause_layer.visible = false
+	pause_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	pause_layer.anchor_right = 1
+	pause_layer.anchor_bottom = 1
+	add_child(pause_layer)
 
-# ===================================================
-# Spawn cars (TextureRect) and set up drag handlers
-# ===================================================
-func _spawn_cars() -> void:
+	var center := CenterContainer.new()
+	center.anchor_left = 0
+	center.anchor_top = 0
+	center.anchor_right = 1
+	center.anchor_bottom = 1
+	pause_layer.add_child(center)
+
+	var box := VBoxContainer.new()
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_theme_constant_override("separation", 10)
+	center.add_child(box)
+
+	var lbl := Label.new()
+	lbl.text = "Pause"
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(lbl)
+
+	var btn_resume := Button.new()
+	btn_resume.text = "Reprendre"
+	btn_resume.pressed.connect(_toggle_pause)
+	box.add_child(btn_resume)
+
+	var btn_restart := Button.new()
+	btn_restart.text = "Recommencer"
+	btn_restart.pressed.connect(func (): get_tree().reload_current_scene())
+	box.add_child(btn_restart)
+
+	var btn_menu := Button.new()
+	btn_menu.text = "Menu principal"
+	btn_menu.pressed.connect(func (): get_tree().change_scene_to_file("res://scenes/Start.tscn"))
+	box.add_child(btn_menu)
+
+# ========================================================
+# BUILD VICTORY LAYER
+# ========================================================
+func _build_victory_layer() -> void:
+	victory_layer = Control.new()
+	victory_layer.visible = false
+	victory_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	victory_layer.anchor_right = 1
+	victory_layer.anchor_bottom = 1
+	add_child(victory_layer)
+
+	var center := CenterContainer.new()
+	center.name = "CenterContainer"
+	center.anchor_left = 0
+	center.anchor_top = 0
+	center.anchor_right = 1
+	center.anchor_bottom = 1
+	victory_layer.add_child(center)
+
+	var box := VBoxContainer.new()
+	box.name = "VBoxContainer"
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_theme_constant_override("separation", 10)
+	center.add_child(box)
+
+	var title := Label.new()
+	title.text = "Victoire !"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.add_child(title)
+
+	var lbl_moves := Label.new()
+	lbl_moves.name = "MovesText"
+	box.add_child(lbl_moves)
+
+	var lbl_time := Label.new()
+	lbl_time.name = "TimeText"
+	box.add_child(lbl_time)
+
+	var lbl_medal := Label.new()
+	lbl_medal.name = "MedalText"
+	box.add_child(lbl_medal)
+
+	var btn_next := Button.new()
+	btn_next.text = "Prochain niveau"
+	btn_next.pressed.connect(_on_next_level)
+	box.add_child(btn_next)
+
+	var btn_restart := Button.new()
+	btn_restart.text = "Recommencer"
+	btn_restart.pressed.connect(func (): get_tree().reload_current_scene())
+	box.add_child(btn_restart)
+
+	var btn_menu := Button.new()
+	btn_menu.text = "Menu principal"
+	btn_menu.pressed.connect(func (): get_tree().change_scene_to_file("res://scenes/Start.tscn"))
+	box.add_child(btn_menu)
+
+# ========================================================
+# LOAD LEVEL
+# ========================================================
+func _load_level() -> void:
+	var level : Dictionary = Levels.get_level()
 	cars.clear()
 	car_defs.clear()
 
@@ -119,182 +203,280 @@ func _spawn_cars() -> void:
 		car_defs[id] = cd.duplicate(true)
 
 		var dir : String = cd["dir"]
-		var path : String = "res://assets/cars/%s_%s.png" % [id, dir]
-		var tex := ImageTexture.create_from_image(Image.load_from_file(path))
+		var len : int = int(cd["len"])
+
+		var tex_path := "res://assets/cars/%s_%s.png" % [id, dir]
+		var tex : ImageTexture
+		if FileAccess.file_exists(tex_path):
+			tex = ImageTexture.create_from_image(Image.load_from_file(tex_path))
+		else:
+			tex = ImageTexture.create_from_image(
+				Image.load_from_file("res://assets/cars/FALLBACK.png")
+			)
 
 		var car := TextureRect.new()
 		car.name = id
 		car.texture = tex
 		car.stretch_mode = TextureRect.STRETCH_SCALE
-		car.expand_mode  = TextureRect.EXPAND_IGNORE_SIZE
-		car.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		car.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 
-		car.anchor_left = 0; car.anchor_top = 0
-		car.anchor_right = 0; car.anchor_bottom = 0
+		# taille en cellules (PAS de ternaire)
+		var w_cells : int
+		var h_cells : int
+		if dir == "H":
+			w_cells = len
+			h_cells = 1
+		else:
+			w_cells = 1
+			h_cells = len
 
-		var w_cells : int = int(cd["len"]) if dir == "H" else 1
-		var h_cells : int = int(cd["len"]) if dir == "V" else 1
 		car.custom_minimum_size = Vector2(w_cells * CELL, h_cells * CELL)
 		car.size = car.custom_minimum_size
 
-		car.position = _grid_to_px(Vector2i(int(cd["x"]), int(cd["y"]))).floor()
+		car.anchor_left = 0
+		car.anchor_top = 0
+
+		var px := int(cd["x"]) * CELL
+		var py := int(cd["y"]) * CELL
+		car.position = Vector2(px, py)
+
 		board_rect.add_child(car)
 		cars[id] = car
 
-		# --- axis-locked drag, live clamp, bump on block, snap on release ---
-		car.gui_input.connect(func (event: InputEvent) -> void:
-			if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-				if event.pressed:
-					var off : Vector2 = car.get_local_mouse_position()
-					car.set_meta("drag_offset", off)
-					car.set_meta("dragging", true)
+		_connect_drag(car)
+
+# ========================================================
+# DRAG LOGIC
+# ========================================================
+func _connect_drag(car: TextureRect) -> void:
+	car.gui_input.connect(func (event: InputEvent) -> void:
+		if won:
+			return
+
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				car.set_meta("dragging", true)
+				car.set_meta("drag_offset", car.get_local_mouse_position())
+			else:
+				car.set_meta("dragging", false)
+				_snap_car(car)
+
+		elif event is InputEventMouseMotion:
+			if car.get_meta("dragging", false):
+				var off : Vector2 = car.get_meta("drag_offset")
+				var desired : Vector2 = car.get_parent().get_local_mouse_position() - off
+
+				var id : String = car.name
+				var d : Dictionary = car_defs[id]
+				var dir : String = d["dir"]
+
+				var bounds : Dictionary = _get_bounds(id)
+
+				if dir == "H":
+					var min_px: int = int(bounds["min"]) * CELL
+					var max_px: int = int(bounds["max"]) * CELL
+					var clamped_x: int = clamp(desired.x, min_px, max_px)
+					car.position.x = clamped_x
 				else:
-					car.set_meta("dragging", false)
-					_snap_to_grid_with_collisions(car)
-			elif event is InputEventMouseMotion:
-				if car.get_meta("dragging", false):
-					var off2 : Vector2 = car.get_meta("drag_offset")
-					var desired_local : Vector2 = car.get_parent().get_local_mouse_position() - off2
+					var min_py: int = int(bounds["min"]) * CELL
+					var max_py: int = int(bounds["max"]) * CELL
+					var clamped_y: int = clamp(desired.y, min_py, max_py)
+					car.position.y = clamped_y
 
-					var id2 : String = car.name
-					var d  : Dictionary = car_defs[id2]
-					var dir_str : String = d["dir"]
+	)
 
-					var bounds : Dictionary = _get_move_bounds(id2)  # {"min":..,"max":..} in GRID CELLS
+# --------------------------------------------------------
+# BORNES (COLLISIONS) – retourne min / max en CASES
+# --------------------------------------------------------
+func _get_bounds(id: String) -> Dictionary:
+	# reconstruit la grille en ignorant cette voiture
+	_rebuild_occupancy(id)
 
-					if dir_str == "H":
-						var min_px : float = float(bounds["min"] * CELL)
-						var max_px : float = float(bounds["max"] * CELL)
-						var clamped_x : float = clamp(desired_local.x, min_px, max_px)
-						car.position.x = floor(clamped_x)
-						if desired_local.x < min_px - 0.5: _bump(car, "x", -1)
-						elif desired_local.x > max_px + 0.5: _bump(car, "x", +1)
-					else:
-						var min_py : float = float(bounds["min"] * CELL)
-						var max_py : float = float(bounds["max"] * CELL)
-						var clamped_y : float = clamp(desired_local.y, min_py, max_py)
-						car.position.y = floor(clamped_y)
-						if desired_local.y < min_py - 0.5: _bump(car, "y", -1)
-						elif desired_local.y > max_py + 0.5: _bump(car, "y", +1)
-		)
+	var def : Dictionary = car_defs[id]
+	var x : int = def["x"]
+	var y : int = def["y"]
+	var l : int = def["len"]
+	var dir : String = def["dir"]
 
-# ===================================================
-# Occupancy grid (for collisions)
-# ===================================================
-func _rebuild_occupancy(except_id:String = "") -> void:
-	occ = []
-	for _y in range(GRID_SIZE):
-		var row : Array = []
-		for _x in range(GRID_SIZE):
-			row.append(null)
-		occ.append(row)
+	var min_cell := 0
+	var max_cell := 0
 
-	for id in cars.keys():
-		if id == except_id:
-			continue
-		var d : Dictionary = car_defs[id]
-		var x : int = int(d["x"])
-		var y : int = int(d["y"])
-		var l : int = int(d["len"])
-		if d["dir"] == "H":
-			for dx in range(l):
-				occ[y][x + dx] = id
-		else:
-			for dy in range(l):
-				occ[y + dy][x] = id
+	if dir == "H":
+		min_cell = x
+		for xx in range(x - 1, -1, -1):
+			if occ[y][xx] != null:
+				break
+			min_cell = xx
 
-# ===================================================
-# Snap to nearest cell and validate collisions
-# ===================================================
-func _snap_to_grid_with_collisions(car: Control) -> void:
+		max_cell = x + l - 1
+		for xx in range(x + l, GRID_SIZE):
+			if occ[y][xx] != null:
+				break
+			max_cell = xx
+	else:
+		min_cell = y
+		for yy in range(y - 1, -1, -1):
+			if occ[yy][x] != null:
+				break
+			min_cell = yy
+
+		max_cell = y + l - 1
+		for yy in range(y + l, GRID_SIZE):
+			if occ[yy][x] != null:
+				break
+			max_cell = yy
+
+	return {
+		"min": min_cell,
+		"max": max_cell,
+	}
+
+# ========================================================
+# SNAP
+# ========================================================
+func _snap_car(car: TextureRect) -> void:
 	var id : String = car.name
 	var def : Dictionary = car_defs[id]
 	var dir : String = def["dir"]
+	var length : int = def["len"]
 
-	var pos_px : Vector2 = car.position
-	var grid : Vector2i = Vector2i(int(round(pos_px.x / CELL)), int(round(pos_px.y / CELL)))
-
-	var new_x : int = int(def["x"])
-	var new_y : int = int(def["y"])
-	var length : int = int(def["len"])
+	var grid_x := int(round(car.position.x / CELL))
+	var grid_y := int(round(car.position.y / CELL))
 
 	if dir == "H":
-		new_x = clampi(grid.x, 0, GRID_SIZE - length)
+		grid_x = clampi(grid_x, 0, GRID_SIZE - length)
 	else:
-		new_y = clampi(grid.y, 0, GRID_SIZE - length)
+		grid_y = clampi(grid_y, 0, GRID_SIZE - length)
 
 	_rebuild_occupancy(id)
 
 	var blocked := false
 	if dir == "H":
 		for dx in range(length):
-			if _cell_occ(new_x + dx, new_y):
+			if occ[grid_y][grid_x + dx] != null:
 				blocked = true
 				break
 	else:
 		for dy in range(length):
-			if _cell_occ(new_x, new_y + dy):
+			if occ[grid_y + dy][grid_x] != null:
 				blocked = true
 				break
 
 	if blocked:
-		car.position = _grid_to_px(Vector2i(int(def["x"]), int(def["y"]))).floor()
-	else:
-		def["x"] = new_x
-		def["y"] = new_y
-		car.position = _grid_to_px(Vector2i(new_x, new_y)).floor()
-		_rebuild_occupancy("")
-
-# ---------------------------------------------------
-# Helpers: occupancy checks, coords, live-bounds, bump
-# ---------------------------------------------------
-func _cell_occ(x:int, y:int) -> bool:
-	if x < 0 or x >= GRID_SIZE or y < 0 or y >= GRID_SIZE:
-		return true
-	return occ[y][x] != null
-
-func _grid_to_px(cell: Vector2i) -> Vector2:
-	return Vector2(cell.x * CELL, cell.y * CELL)
-
-# Legal movement range (in GRID CELLS) along the car axis, excluding itself
-func _get_move_bounds(id:String) -> Dictionary:
-	var d : Dictionary = car_defs[id]
-	var x : int = int(d["x"])
-	var y : int = int(d["y"])
-	var l : int = int(d["len"])
-
-	_rebuild_occupancy(id)  # ignore this car while scanning
-
-	if d["dir"] == "H":
-		var left : int = x
-		while left - 1 >= 0 and not _cell_occ(left - 1, y):
-			left -= 1
-		var right : int = x
-		while right + l <= GRID_SIZE - 1 and not _cell_occ(right + l, y):
-			right += 1
-		return {"min": left, "max": right}
-	else:
-		var up : int = y
-		while up - 1 >= 0 and not _cell_occ(x, up - 1):
-			up -= 1
-		var down : int = y
-		while down + l <= GRID_SIZE - 1 and not _cell_occ(x, down + l):
-			down += 1
-		return {"min": up, "max": down}
-
-# Tiny vibration when pushing into a car/wall
-# axis = "x" or "y", dir = -1 or +1
-func _bump(car: Control, axis:String, dir:int) -> void:
-	if car.get_meta("bumping", false):
+		_rebound_animation(car)
+		car.position = Vector2(def["x"] * CELL, def["y"] * CELL)
 		return
-	car.set_meta("bumping", true)
 
-	var t := create_tween()
-	var amt := 6.0 * dir
-	if axis == "x":
-		t.tween_property(car, "position:x", car.position.x + amt, 0.06).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-		t.tween_property(car, "position:x", car.position.x, 0.06)
-	else:
-		t.tween_property(car, "position:y", car.position.y + amt, 0.06).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-		t.tween_property(car, "position:y", car.position.y, 0.06)
-	t.finished.connect(func(): car.set_meta("bumping", false))
+	if def["x"] != grid_x or def["y"] != grid_y:
+		move_count += 1
+		_update_moves_label()
+
+	def["x"] = grid_x
+	def["y"] = grid_y
+	car.position = Vector2(grid_x * CELL, grid_y * CELL)
+
+	_rebuild_occupancy()
+	_check_victory()
+
+# Petit effet de shake quand collision
+func _rebound_animation(car: TextureRect) -> void:
+	var tween := get_tree().create_tween()
+	var orig := car.position
+	tween.tween_property(car, "position", orig + Vector2(6, 0), 0.05)
+	tween.tween_property(car, "position", orig, 0.05)
+
+# ========================================================
+# OCCUPANCY GRID
+# ========================================================
+func _rebuild_occupancy(except_id: String = "") -> void:
+	occ.clear()
+	for _y in range(GRID_SIZE):
+		var row : Array = []
+		for _x in range(GRID_SIZE):
+			row.append(null)
+		occ.append(row)
+
+	for id in car_defs.keys():
+		if id == except_id:
+			continue
+		var d : Dictionary = car_defs[id]
+		var x : int = d["x"]
+		var y : int = d["y"]
+		var l : int = d["len"]
+		var dir : String = d["dir"]
+
+		if dir == "H":
+			for dx in range(l):
+				occ[y][x + dx] = id
+		else:
+			for dy in range(l):
+				occ[y + dy][x] = id
+
+# ========================================================
+# VICTOIRE
+# ========================================================
+func _check_victory() -> void:
+	var R : Dictionary = car_defs["R"]
+	if int(R["x"]) + int(R["len"]) == GRID_SIZE:
+		_trigger_victory()
+
+func _trigger_victory() -> void:
+	won = true
+	timer_running = false
+
+	var car : TextureRect = cars["R"]
+
+	var tween := get_tree().create_tween()
+	tween.tween_property(car, "position", car.position + Vector2(300, 0), 1.2)
+	await tween.finished
+
+	_show_victory_screen()
+
+func _show_victory_screen() -> void:
+	victory_layer.visible = true
+
+	victory_layer.get_node("CenterContainer/VBoxContainer/MovesText").text = "Mouvements : %d" % move_count
+
+	victory_layer.get_node("CenterContainer/VBoxContainer/TimeText").text = "Temps : %s" % _format_time(timer)
+
+	victory_layer.get_node("CenterContainer/VBoxContainer/MedalText").text = "Médaille : %s" % _get_medal(move_count)
+
+func _get_medal(moves: int) -> String:
+	if moves <= 5:
+		return "Or"
+	elif moves <= 10:
+		return "Argent"
+	return "Bronze"
+
+func _on_next_level() -> void:
+	Levels.go_to_next_level()
+	get_tree().change_scene_to_file("res://scenes/Main.tscn")
+
+# ========================================================
+# INPUT
+# ========================================================
+func _unhandled_input(event: InputEvent) -> void:
+	if event.is_action_pressed("ui_cancel") and not won:
+		_toggle_pause()
+	elif event is InputEventKey and event.pressed and event.keycode == Key.KEY_R:
+		get_tree().reload_current_scene()
+
+func _toggle_pause() -> void:
+	if won:
+		return
+	pause_layer.visible = not pause_layer.visible
+	timer_running = not pause_layer.visible
+
+# ========================================================
+# HUD HELPERS
+# ========================================================
+func _update_moves_label() -> void:
+	moves_label.text = "Mouvements : %d" % move_count
+
+func _update_timer_label() -> void:
+	timer_label.text = "Temps : %s" % _format_time(timer)
+
+func _format_time(t: float) -> String:
+	var m := int(t / 60)
+	var s := int(t) % 60
+	return "%02d:%02d" % [m, s]

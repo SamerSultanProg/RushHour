@@ -14,6 +14,10 @@ config/name="Rush Hour"
 run/main_scene="uid://cbxgrgna0u7kq"
 config/features=PackedStringArray("4.5")
 
+[autoload]
+
+Levels="*res://scripts/Levels.gd"
+
 [display]
 
 window/size/viewport_width=960
