@@ -1,0 +1,45 @@
+[gd_scene load_steps=2 format=3 uid="uid://b1gq2q2q2q2q2"]
+
+[ext_resource type="Script" path="res://scripts/Instructions.gd" id="1_abcde"]
+
+[node name="Instructions" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_abcde")
+
+[node name="BackButton" type="Button" parent="."]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -100.0
+offset_top = -100.0
+offset_right = 100.0
+offset_bottom = -50.0
+grow_horizontal = 2
+grow_vertical = 0
+text = "Back"
+
+[node name="Label" type="Label" parent="."]
+layout_mode = 1
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -226.0
+offset_right = 226.0
+offset_bottom = 227.0
+grow_horizontal = 2
+text = "Instructions:
+
+1. The goal is to get the red car out of the grid.
+2. Cars can only move along their axis (horizontally or vertically).
+3. Click and drag the cars to move them.
+4. Progress through all 10 levels to win the game."
+horizontal_alignment = 1
+vertical_alignment = 1
