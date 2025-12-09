@@ -1,2 +1,7 @@
-res://scripts/DebugStats.gd
+res://scripts/Levels.gd
 res://scripts/Main.gd
+res://scripts/Configuration.gd
+res://scripts/Start.gd
+res://scripts/UIHelper.gd
+res://scripts/LevelSelect.gd
+res://scripts/Instructions.gd
