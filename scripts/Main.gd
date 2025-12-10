@@ -868,6 +868,7 @@ func _snap_car(car: TextureRect) -> void:
 
 	# Rebuild occupancy and check victory
 	_rebuild_occupancy()
+	_print_occupancy_grid()
 	_check_victory()
 
 # Petit effet de shake quand collision
@@ -921,6 +922,18 @@ func _rebuild_occupancy(except_id: String = "") -> void:
 				var cell_y = grid_y + dy
 				if cell_y < GRID_SIZE:
 					occ[cell_y][grid_x] = id
+
+func _print_occupancy_grid() -> void:
+	print("\n=== OCCUPANCY GRID ===")
+	for y in range(GRID_SIZE):
+		var row_str := ""
+		for x in range(GRID_SIZE):
+			if occ[y][x] == null:
+				row_str += ". "
+			else:
+				row_str += str(occ[y][x]) + " "
+		print(row_str)
+	print("======================\n")
 
 # ========================================================
 # VICTOIRE

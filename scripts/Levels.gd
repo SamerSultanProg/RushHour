@@ -15,9 +15,6 @@ var is_random_level : bool = false
 var random_level_data : Dictionary = {}
 var random_level_optimal : int = 0
 
-# 10 niveaux — aucun overlap, tout tient dans une grille 6x6
-# Tous les niveaux sont solvables, difficulté croissante
-# (en nombre minimal de coups nécessaires pour libérer la voiture rouge).
 var LEVELS := [
 	{ "cars": [   # NIVEAU 1 - R at (2,2), needs to exit right
 		{"id":"R", "x":2, "y":2, "len":2, "dir":"H"},

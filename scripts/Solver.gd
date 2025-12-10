@@ -123,7 +123,7 @@ class BoardState:
 						right_moves = dx
 					else:
 						break
-				
+				 
 				for dx in range(1, right_moves + 1):
 					var new_state := duplicate()
 					for c in new_state.cars:

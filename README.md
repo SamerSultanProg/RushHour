@@ -1,4 +1,4 @@
-# Rush Hour - Jeu de Puzzle
+# Rush Hour - Jeu de Puzzle (Samer Sultan)
 
 ## Concept du Projet
 
@@ -110,8 +110,8 @@ Boucle principale:
 
 - **Concept original** : Rush Hour par ThinkFun (Nob Yoshigahara, 1996)
 - **Moteur de jeu** : [Godot Engine 4.5](https://godotengine.org/)
-- **Algorithme BFS** : Introduction to Algorithms (Cormen et al.) - Chapitre sur les parcours de graphes
-- **Génération procédurale** : Principes de Procedural Content Generation (PCG) appliqués aux puzzles
+- **Algorithme BFS** : [Breadth First Search for Rush Hour](https://github.com/takoshiobi/rush-hour-bfs)
+- **Génération procédurale** : [Procedural Generation of Rush Hour Levels](https://www.lamsade.dauphine.fr/~cazenave/papers/RushHour.pdf)
 
 ---
 
@@ -132,4 +132,4 @@ RushHour/
 
 ---
 
-*Projet réalisé dans le cadre d'un cours de programmation - Décembre 2025*
+*Projet réalisé dans le cadre d'un cours de programmation de jeux vidéos - Décembre 2025*
