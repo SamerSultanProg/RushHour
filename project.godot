@@ -20,6 +20,7 @@ Levels="*res://scripts/Levels.gd"
 AudioManager="*res://scripts/AudioManager.gd"
 DebugStats="*res://scripts/DebugStats.gd"
 UIHelper="*res://scripts/UIHelper.gd"
+Solver="*res://scripts/Solver.gd"
 
 [display]
 
