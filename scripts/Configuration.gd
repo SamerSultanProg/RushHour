@@ -87,6 +87,7 @@ func _build_styled_ui() -> void:
 	back_btn.text = "✓ Retour"
 	back_btn.custom_minimum_size = Vector2(200, 50)
 	_style_config_button(back_btn)
+	back_btn.focus_mode = Control.FOCUS_ALL
 	back_btn.pressed.connect(func():
 		AudioManager.play_button_click()
 		if is_modal:
@@ -95,6 +96,9 @@ func _build_styled_ui() -> void:
 			get_tree().change_scene_to_file("res://scenes/Start.tscn")
 	)
 	main_box.add_child(back_btn)
+	
+	# Give focus to the back button for keyboard/joystick navigation
+	back_btn.call_deferred("grab_focus")
 
 func _create_volume_section(label_text: String, initial_db: float, callback: Callable) -> VBoxContainer:
 	var section := VBoxContainer.new()

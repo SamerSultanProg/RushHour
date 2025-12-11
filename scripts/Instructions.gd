@@ -205,7 +205,11 @@ func _create_right_panel() -> Control:
 	back_btn.text = "Retour au menu"
 	UIHelper.style_button(back_btn)
 	back_btn.pressed.connect(_go_back)
+	back_btn.focus_mode = Control.FOCUS_ALL
 	btn_container.add_child(back_btn)
+	
+	# Give focus to the back button for keyboard/joystick navigation
+	back_btn.call_deferred("grab_focus")
 	
 	return container
 

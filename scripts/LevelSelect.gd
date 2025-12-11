@@ -94,6 +94,73 @@ func _ready() -> void:
 	back_button.pressed.connect(_go_back)
 	UIHelper.style_button(back_button)
 	special_container.add_child(back_button)
+	
+	# Setup focus navigation for all buttons in grid + special buttons
+	_setup_grid_focus(grid, [random_button, back_button])
+
+func _setup_grid_focus(grid: GridContainer, extra_buttons: Array) -> void:
+	var buttons: Array[Button] = []
+	# Collect level buttons from grid
+	for child in grid.get_children():
+		if child is VBoxContainer:
+			for sub in child.get_children():
+				if sub is Button:
+					buttons.append(sub)
+	
+	# Add extra buttons
+	for btn in extra_buttons:
+		buttons.append(btn)
+	
+	var cols := grid.columns
+	var level_count := buttons.size() - extra_buttons.size()
+	
+	for i in range(buttons.size()):
+		var btn: Button = buttons[i]
+		btn.focus_mode = Control.FOCUS_ALL
+		
+		if i < level_count:
+			# Grid navigation for level buttons
+			var row := i / cols
+			var col := i % cols
+			
+			# Up neighbor
+			if row > 0:
+				btn.focus_neighbor_top = btn.get_path_to(buttons[i - cols])
+			else:
+				btn.focus_neighbor_top = btn.get_path_to(buttons[i])
+			
+			# Down neighbor
+			if i + cols < level_count:
+				btn.focus_neighbor_bottom = btn.get_path_to(buttons[i + cols])
+			else:
+				# Go to extra buttons row
+				btn.focus_neighbor_bottom = btn.get_path_to(buttons[level_count])
+			
+			# Left neighbor
+			if col > 0:
+				btn.focus_neighbor_left = btn.get_path_to(buttons[i - 1])
+			else:
+				btn.focus_neighbor_left = btn.get_path_to(btn)
+			
+			# Right neighbor
+			if col < cols - 1 and i + 1 < level_count:
+				btn.focus_neighbor_right = btn.get_path_to(buttons[i + 1])
+			else:
+				btn.focus_neighbor_right = btn.get_path_to(btn)
+		else:
+			# Extra buttons (random, back) - horizontal navigation
+			var extra_idx := i - level_count
+			var prev_extra := level_count + ((extra_idx - 1 + extra_buttons.size()) % extra_buttons.size())
+			var next_extra := level_count + ((extra_idx + 1) % extra_buttons.size())
+			
+			btn.focus_neighbor_left = btn.get_path_to(buttons[prev_extra])
+			btn.focus_neighbor_right = btn.get_path_to(buttons[next_extra])
+			btn.focus_neighbor_top = btn.get_path_to(buttons[max(0, level_count - cols)])
+			btn.focus_neighbor_bottom = btn.get_path_to(btn)
+	
+	# Give focus to first button
+	if buttons.size() > 0:
+		buttons[0].grab_focus()
 
 func _load_level(idx: int) -> void:
 	AudioManager.play_button_click()

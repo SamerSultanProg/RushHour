@@ -174,6 +174,21 @@ func _build_content() -> void:
 	btn_quit.pressed.connect(_on_quit)
 	btn_container.add_child(btn_quit)
 	
+	# Setup focus navigation for arcade/keyboard
+	var buttons := [btn_replay, btn_menu, btn_quit]
+	for i in range(buttons.size()):
+		var btn: Button = buttons[i]
+		btn.focus_mode = Control.FOCUS_ALL
+		var prev_idx := (i - 1 + buttons.size()) % buttons.size()
+		var next_idx := (i + 1) % buttons.size()
+		btn.focus_neighbor_left = btn.get_path_to(buttons[prev_idx])
+		btn.focus_neighbor_right = btn.get_path_to(buttons[next_idx])
+		btn.focus_neighbor_top = btn.get_path_to(buttons[prev_idx])
+		btn.focus_neighbor_bottom = btn.get_path_to(buttons[next_idx])
+	
+	# Give focus to main button
+	btn_menu.grab_focus()
+	
 	# Animate entrance
 	panel.pivot_offset = panel.size / 2.0
 	panel.scale = Vector2(0.7, 0.7)

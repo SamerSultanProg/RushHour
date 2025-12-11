@@ -44,6 +44,21 @@ var current_medal: String = "gold"
 var hint_button: Button
 var hint_car_highlight: ColorRect
 
+# Selection system
+var selected_car_id: String = ""
+var selected_index: int = -1
+var selected_highlight: ColorRect
+var selected_label: Label
+
+# Axis repeat handling for joystick movement
+var axis_deadzone: float = 0.25
+var axis_prev_x: int = 0
+var axis_prev_y: int = 0
+var axis_hold_time_x: float = 0.0
+var axis_hold_time_y: float = 0.0
+var axis_repeat_delay: float = 0.35
+var axis_repeat_rate: float = 0.12
+
 
 # ========================================================
 # READY
@@ -59,6 +74,64 @@ func _ready() -> void:
 
 	_load_level()
 	_rebuild_occupancy()
+	
+	# Release any UI focus so A/X buttons work for car selection
+	# (prevents ui_accept from being consumed by focused buttons)
+	get_viewport().gui_release_focus()
+
+	# ==============================================
+	# ARCADE BUTTON MAPPINGS (Godot 4.5 on RetroPie)
+	# A = joy_button_3, B = joy_button_1
+	# X = joy_button_0, Y = joy_button_2
+	# Select = joy_button_4, Start = joy_button_6
+	# L1 = joy_button_9, R1 = joy_button_10
+	# ==============================================
+	
+	# Arcade exit: Select (hotkey) + Start (quit)
+	if is_on_arcade():
+		if not InputMap.has_action("hotkey"):
+			InputMap.add_action("hotkey")
+			var ev_hot := InputEventJoypadButton.new()
+			ev_hot.button_index = 4 as JoyButton  # Select
+			InputMap.action_add_event("hotkey", ev_hot)
+		if not InputMap.has_action("quit"):
+			InputMap.add_action("quit")
+			var ev_quit := InputEventJoypadButton.new()
+			ev_quit.button_index = 6 as JoyButton  # Start
+			InputMap.action_add_event("quit", ev_quit)
+
+	# Selection controls: keyboard only (E/Q keys)
+	# Joystick buttons (A/X) are handled directly in _input() to avoid double-triggering
+	if not InputMap.has_action("cycle_car_next"):
+		InputMap.add_action("cycle_car_next")
+	var ev_next_k := InputEventKey.new()
+	ev_next_k.keycode = Key.KEY_E
+	InputMap.action_add_event("cycle_car_next", ev_next_k)
+
+	if not InputMap.has_action("cycle_car_prev"):
+		InputMap.add_action("cycle_car_prev")
+	var ev_prev_k := InputEventKey.new()
+	ev_prev_k.keycode = Key.KEY_Q
+	InputMap.action_add_event("cycle_car_prev", ev_prev_k)
+
+	# Menu navigation: A = accept, B = cancel/back
+	var ev_accept := InputEventJoypadButton.new()
+	ev_accept.button_index = 3 as JoyButton  # A button
+	InputMap.action_add_event("ui_accept", ev_accept)
+	
+	var ev_cancel := InputEventJoypadButton.new()
+	ev_cancel.button_index = 1 as JoyButton  # B button
+	InputMap.action_add_event("ui_cancel", ev_cancel)
+
+	# Debug shortcut: J key or Y button to show game complete screen
+	if not InputMap.has_action("debug_game_complete"):
+		InputMap.add_action("debug_game_complete")
+		var ev_debug_k := InputEventKey.new()
+		ev_debug_k.keycode = Key.KEY_J
+		InputMap.action_add_event("debug_game_complete", ev_debug_k)
+		var ev_debug_j := InputEventJoypadButton.new()
+		ev_debug_j.button_index = 2 as JoyButton  # Y button
+		InputMap.action_add_event("debug_game_complete", ev_debug_j)
 
 	set_process(true)
 
@@ -66,9 +139,191 @@ func _ready() -> void:
 # PROCESS — TIMER
 # ========================================================
 func _process(delta: float) -> void:
+	# Manage arcade exit hotkey and update UI timer
+	manage_end_game()
+
+	# NOTE: Mouse simulation disabled - we now use selection-based movement
+	# The joystick directly moves the selected car via _handle_selection_input
+	
+	# Handle selection / joystick movement (works on laptop and arcade)
+	_handle_selection_input(delta)
+
 	if timer_running and not won:
 		timer += delta
 		_update_timer_label()
+
+	# end _process
+
+
+func is_on_arcade() -> bool:
+	return OS.get_executable_path().to_lower().contains("retropie")
+
+
+func manage_end_game() -> void:
+	if is_on_arcade():
+		if Input.is_action_pressed("hotkey") and Input.is_action_pressed("quit"):
+			get_tree().quit()
+	else:
+		if Input.is_action_just_pressed("quit"):
+			get_tree().quit()
+
+
+# ========================================================
+# SELECTION + JOYSTICK MOVEMENT
+# ========================================================
+func _cycle_selected(next: bool = true) -> void:
+	# Build ordered list of car ids (sorted for consistent order)
+	var ids := []
+	for id in car_defs.keys():
+		ids.append(id)
+	ids.sort()  # Sort alphabetically for consistent cycling order
+	
+	if ids.size() == 0:
+		return
+
+	# If we have a current selection, find its index in the sorted list
+	if selected_car_id != "" and selected_car_id in ids:
+		selected_index = ids.find(selected_car_id)
+	elif selected_index < 0 or selected_index >= ids.size():
+		selected_index = 0
+
+	if next:
+		selected_index = (selected_index + 1) % ids.size()
+	else:
+		selected_index = (selected_index - 1 + ids.size()) % ids.size()
+
+	selected_car_id = ids[selected_index]
+	_update_selected_highlight()
+
+func _update_selected_highlight() -> void:
+	if selected_highlight and is_instance_valid(selected_highlight):
+		selected_highlight.queue_free()
+		selected_highlight = null
+
+	if not selected_car_id or not cars.has(selected_car_id):
+		selected_label.text = "Voiture sélectionnée : -"
+		return
+
+	var car: TextureRect = cars[selected_car_id]
+	selected_highlight = ColorRect.new()
+	selected_highlight.color = Color(0.0, 1.0, 0.0, 0.22)
+	selected_highlight.size = car.size
+	selected_highlight.position = car.position
+	board_rect.add_child(selected_highlight)
+	# Keep highlight above the car
+	board_rect.move_child(selected_highlight, board_rect.get_child_count() - 1)
+
+	selected_label.text = "Voiture sélectionnée : %s" % selected_car_id
+
+func _move_selected(dx: int, dy: int) -> void:
+	if selected_car_id == "":
+		return
+	if not car_defs.has(selected_car_id):
+		return
+
+	var def: Dictionary = car_defs[selected_car_id]
+	var car: TextureRect = cars[selected_car_id]
+	var dir: String = def["dir"]
+
+	# Only allow movement along the car's axis
+	var cur_x := int(round(car.position.x / CELL))
+	var cur_y := int(round(car.position.y / CELL))
+
+	if dir == "H":
+		if dx == 0:
+			return
+		var bounds := _get_bounds(selected_car_id)
+		var target_x: int = clampi(cur_x + dx, int(bounds["min"]), int(bounds["max"]))
+		if target_x == cur_x:
+			return
+		def["x"] = target_x
+		car.position.x = target_x * CELL
+	else:
+		if dy == 0:
+			return
+		var bounds2 := _get_bounds(selected_car_id)
+		var target_y: int = clampi(cur_y + dy, int(bounds2["min"]), int(bounds2["max"]))
+		if target_y == cur_y:
+			return
+		def["y"] = target_y
+		car.position.y = target_y * CELL
+
+	move_count += 1
+	_update_moves_label()
+	AudioManager.play_car_move()
+	_rebuild_occupancy()
+	_check_victory()
+	_update_selected_highlight()
+
+func _handle_selection_input(delta: float) -> void:
+	# Don't handle game input if ANY modal is open or game is won
+	if pause_layer.visible or config_scene_instance != null or victory_layer.visible or won:
+		# Reset axis state so we don't get phantom movements when returning to game
+		axis_prev_x = 0
+		axis_prev_y = 0
+		axis_hold_time_x = 0.0
+		axis_hold_time_y = 0.0
+		return
+	
+	# Cycle selection by keyboard (E/Q keys)
+	# Joystick buttons (A/X) are handled in _input() to bypass UI focus issues
+	if Input.is_action_just_pressed("cycle_car_next"):
+		_cycle_selected(true)
+	if Input.is_action_just_pressed("cycle_car_prev"):
+		_cycle_selected(false)
+
+	# Keyboard arrows / WASD quick moves
+	if Input.is_action_just_pressed("ui_right"):
+		_move_selected(1, 0)
+	if Input.is_action_just_pressed("ui_left"):
+		_move_selected(-1, 0)
+	if Input.is_action_just_pressed("ui_down"):
+		_move_selected(0, 1)
+	if Input.is_action_just_pressed("ui_up"):
+		_move_selected(0, -1)
+
+	# Joystick axes with repeat
+	var js_x := 0.0
+	var js_y := 0.0
+	if Input.get_connected_joypads().size() > 0:
+		var dev := int(Input.get_connected_joypads()[0])
+		js_x = Input.get_joy_axis(dev, JOY_AXIS_LEFT_X)
+		js_y = Input.get_joy_axis(dev, JOY_AXIS_LEFT_Y)
+
+	var sign_x := 0
+	var sign_y := 0
+	if abs(js_x) > axis_deadzone:
+		sign_x = 1 if js_x > 0 else -1
+	if abs(js_y) > axis_deadzone:
+		sign_y = 1 if js_y > 0 else -1
+
+	# X axis handling
+	if sign_x != 0:
+		if sign_x == axis_prev_x:
+			axis_hold_time_x += delta
+		else:
+			axis_hold_time_x = 0.0
+		if axis_hold_time_x == 0.0 or axis_hold_time_x > axis_repeat_delay:
+			_move_selected(sign_x, 0)
+			axis_hold_time_x = axis_hold_time_x - axis_repeat_rate
+		axis_prev_x = sign_x
+	else:
+		axis_prev_x = 0
+		axis_hold_time_x = 0.0
+
+	# Y axis handling
+	if sign_y != 0:
+		if sign_y == axis_prev_y:
+			axis_hold_time_y += delta
+		else:
+			axis_hold_time_y = 0.0
+		if axis_hold_time_y == 0.0 or axis_hold_time_y > axis_repeat_delay:
+			_move_selected(0, sign_y)
+			axis_hold_time_y = axis_hold_time_y - axis_repeat_rate
+		axis_prev_y = sign_y
+	else:
+		axis_prev_y = 0
+		axis_hold_time_y = 0.0
 
 # ========================================================
 # BUILD BACKGROUND
@@ -243,6 +498,7 @@ func _draw_exit_indicator() -> void:
 	var sign_bg := ColorRect.new()
 	sign_bg.color = green
 	sign_bg.size = Vector2(44, 28)
+	@warning_ignore("integer_division")
 	sign_bg.position = Vector2(CELL * GRID_SIZE + 3, exit_row * CELL + CELL / 2 - 14)
 	board_rect.add_child(sign_bg)
 	
@@ -250,6 +506,7 @@ func _draw_exit_indicator() -> void:
 	var sign_border := ColorRect.new()
 	sign_border.color = Color(1, 1, 1, 0.9)
 	sign_border.size = Vector2(48, 32)
+	@warning_ignore("integer_division")
 	sign_border.position = Vector2(CELL * GRID_SIZE + 1, exit_row * CELL + CELL / 2 - 16)
 	board_rect.add_child(sign_border)
 	board_rect.move_child(sign_border, sign_bg.get_index())
@@ -258,6 +515,7 @@ func _draw_exit_indicator() -> void:
 	var arrow := Label.new()
 	arrow.text = "EXIT →"
 	arrow.add_theme_font_size_override("font_size", 12)
+	@warning_ignore("integer_division")
 	arrow.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 	arrow.position = Vector2(CELL * GRID_SIZE + 5, exit_row * CELL + CELL / 2 - 10)
 	board_rect.add_child(arrow)
@@ -290,6 +548,10 @@ func _build_ui() -> void:
 	level_label = Label.new()
 	moves_label = Label.new()
 	timer_label = Label.new()
+
+	selected_label = Label.new()
+	selected_label.text = "Voiture sélectionnée : -"
+	hud.add_child(selected_label)
 
 	if Levels.is_playing_random():
 		level_label.text = "Niveau Aléatoire"
@@ -397,6 +659,7 @@ func _build_medal_indicator() -> void:
 	hint_button = Button.new()
 	hint_button.text = "💡 Indice"
 	hint_button.custom_minimum_size = Vector2(120, 36)
+	hint_button.focus_mode = Control.FOCUS_NONE  # Disable focus so A/X don't trigger it
 	UIHelper.style_button(hint_button)
 	hint_button.pressed.connect(_on_hint_pressed)
 	vbox.add_child(hint_button)
@@ -487,10 +750,29 @@ func _build_pause_layer() -> void:
 		get_tree().change_scene_to_file("res://scenes/Start.tscn")
 	)
 	box.add_child(btn_menu)
+	
+	# Setup focus navigation for pause menu
+	var pause_buttons := [btn_resume, btn_restart, btn_config, btn_menu]
+	for i in range(pause_buttons.size()):
+		var btn: Button = pause_buttons[i]
+		btn.focus_mode = Control.FOCUS_ALL
+		var prev_idx := (i - 1 + pause_buttons.size()) % pause_buttons.size()
+		var next_idx := (i + 1) % pause_buttons.size()
+		btn.focus_neighbor_top = btn.get_path_to(pause_buttons[prev_idx])
+		btn.focus_neighbor_bottom = btn.get_path_to(pause_buttons[next_idx])
+		btn.focus_neighbor_left = btn.get_path_to(pause_buttons[prev_idx])
+		btn.focus_neighbor_right = btn.get_path_to(pause_buttons[next_idx])
+	
+	# Store references for focus management
+	pause_layer.set_meta("first_button", btn_resume)
+	pause_layer.set_meta("pause_buttons", pause_buttons)
 
 func _open_config_modal():
 	if config_scene_instance:
 		return # Already open
+	
+	# Disable focus on pause menu buttons so they don't intercept navigation
+	_set_pause_buttons_focus(false)
 
 	var config_scene = load("res://scenes/Configuration.tscn").instantiate()
 	config_scene_instance = config_scene
@@ -499,10 +781,47 @@ func _open_config_modal():
 		if config_scene_instance:
 			config_scene_instance.queue_free()
 			config_scene_instance = null
-		# Re-enable pause menu input handling
-		get_viewport().set_input_as_handled()
+		# Re-enable focus on pause menu and return focus
+		_set_pause_buttons_focus(true)
+		if pause_layer.visible and pause_layer.has_meta("first_button"):
+			var first_btn: Button = pause_layer.get_meta("first_button")
+			first_btn.grab_focus()
 	)
 	add_child(config_scene)
+
+func _set_pause_buttons_focus(enabled: bool) -> void:
+	if pause_layer.has_meta("pause_buttons"):
+		var buttons: Array = pause_layer.get_meta("pause_buttons")
+		for btn in buttons:
+			if btn is Button:
+				btn.focus_mode = Control.FOCUS_ALL if enabled else Control.FOCUS_NONE
+
+func _setup_victory_buttons_focus(btn_container: Control) -> void:
+	# Wait one frame for queue_free'd buttons to be removed
+	await get_tree().process_frame
+	
+	# Collect all buttons from the container
+	var buttons: Array[Button] = []
+	for child in btn_container.get_children():
+		if child is Button:
+			buttons.append(child)
+	
+	if buttons.is_empty():
+		return
+	
+	# Setup focus navigation (vertical layout)
+	for i in range(buttons.size()):
+		var btn: Button = buttons[i]
+		btn.focus_mode = Control.FOCUS_ALL
+		var prev_idx := (i - 1 + buttons.size()) % buttons.size()
+		var next_idx := (i + 1) % buttons.size()
+		btn.focus_neighbor_top = btn.get_path_to(buttons[prev_idx])
+		btn.focus_neighbor_bottom = btn.get_path_to(buttons[next_idx])
+		btn.focus_neighbor_left = btn.get_path_to(buttons[prev_idx])
+		btn.focus_neighbor_right = btn.get_path_to(buttons[next_idx])
+	
+	# Give focus to first button (primary action)
+	buttons[0].call_deferred("grab_focus")
 
 # ========================================================
 # BUILD VICTORY LAYER
@@ -704,6 +1023,10 @@ func _load_level() -> void:
 func _connect_drag(car: TextureRect) -> void:
 	car.gui_input.connect(func (event: InputEvent) -> void:
 		if won:
+			return
+		
+		# Don't allow dragging when a modal is open
+		if pause_layer.visible or config_scene_instance != null or victory_layer.visible:
 			return
 
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -1034,6 +1357,9 @@ func _show_victory_screen() -> void:
 			get_tree().change_scene_to_file("res://scenes/Start.tscn")
 		)
 		btn_container.add_child(btn_menu)
+		
+		# Setup focus navigation for arcade/keyboard
+		_setup_victory_buttons_focus(btn_container)
 	
 	# Animation d'entrée
 	if panel:
@@ -1095,6 +1421,33 @@ func _on_next_level() -> void:
 # ========================================================
 # INPUT
 # ========================================================
+
+# Use _input instead of _unhandled_input to catch joystick buttons BEFORE UI consumes them
+func _input(event: InputEvent) -> void:
+	# Don't process if modals are open
+	if pause_layer and pause_layer.visible:
+		return
+	if config_scene_instance and config_scene_instance.visible:
+		return
+	if victory_layer and victory_layer.visible:
+		return
+	if won:
+		return
+	
+	# Handle joystick button presses directly for car cycling
+	# This bypasses the ui_accept conflict
+	if event is InputEventJoypadButton and event.pressed:
+		var btn_idx: int = event.button_index
+		if btn_idx == 3:  # A button (joy_button_3) = next car
+			_cycle_selected(true)
+			get_viewport().set_input_as_handled()
+		elif btn_idx == 0:  # X button (joy_button_0) = prev car
+			_cycle_selected(false)
+			get_viewport().set_input_as_handled()
+		elif btn_idx == 10:  # R1 button (joy_button_10) = hint
+			_on_hint_pressed()
+			get_viewport().set_input_as_handled()
+
 func _unhandled_input(event: InputEvent) -> void:
 	if config_scene_instance and config_scene_instance.visible:
 		# If config modal is open, let it handle the input first
@@ -1104,7 +1457,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		_toggle_pause()
 	elif event is InputEventKey and event.pressed and event.keycode == Key.KEY_R:
 		get_tree().reload_current_scene()
-	elif event is InputEventKey and event.pressed and event.keycode == Key.KEY_J:
+	elif event.is_action_pressed("debug_game_complete"):
 		# Debug shortcut: Show game complete screen (for presentation)
 		get_tree().change_scene_to_file("res://scenes/GameComplete.tscn")
 
@@ -1113,6 +1466,11 @@ func _toggle_pause() -> void:
 		return
 	pause_layer.visible = not pause_layer.visible
 	timer_running = not pause_layer.visible
+	
+	# Grab focus on first button when pause opens
+	if pause_layer.visible and pause_layer.has_meta("first_button"):
+		var first_btn: Button = pause_layer.get_meta("first_button")
+		first_btn.grab_focus()
 
 # ========================================================
 # HUD HELPERS
